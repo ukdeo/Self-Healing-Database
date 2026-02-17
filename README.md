@@ -32,7 +32,6 @@
 12. [MongoDB Shell Reference](#-mongodb-shell-reference)
 13. [Troubleshooting](#-troubleshooting)
 14. [Contributing](#-contributing)
-15. [License](#-license)
 
 ---
 
