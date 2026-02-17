@@ -58,8 +58,8 @@ CONFIG = {
     'CHECK_SLOW_QUERIES': True,
     
     # Auto-fix settings
-    'AUTO_FIX_ENABLED': True,  # Set to True to enable auto-fixing
-    'DRY_RUN': False,            # Safe mode - only logs, no changes
+    'AUTO_FIX_ENABLED': True,   # Set to True to enable auto-fixing
+    'DRY_RUN': False,           # Safe mode - only logs, no changes
     'BACKUP_BEFORE_FIX': True,  # Create backup before fixing
     
     # Dashboard settings
@@ -510,10 +510,29 @@ class RealtimeErrorFixer:
             return False
     
     def _create_backup(self, error):
-        """Create backup before fixing"""
-        logger.info("📦 Creating backup...")
-        # In production, implement actual backup logic
-        time.sleep(0.5)
+        """Create a REAL backup collection in MongoDB before fixing"""
+        try:
+            collection_name = error.get('collection')
+            if not collection_name:
+                return
+
+            # Build backup collection name with timestamp
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            backup_name = f"{collection_name}_backup_{timestamp}"
+
+            # Copy all documents from original collection into backup
+            source = self.db[collection_name]
+            backup_col = self.db[backup_name]
+
+            docs = list(source.find())
+            if docs:
+                backup_col.insert_many(docs)
+                logger.info(f"📦 Backup created: '{backup_name}' ({len(docs)} documents saved)")
+            else:
+                logger.info(f"📦 Backup skipped: '{collection_name}' is empty")
+
+        except Exception as e:
+            logger.error(f"❌ Backup failed: {e}")
     
     def _fix_duplicates(self, error):
         """Fix duplicate records"""

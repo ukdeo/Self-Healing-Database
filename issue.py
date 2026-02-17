@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-Database Issue Generator for Testing Self-Healing System
-Creates intentional errors in MongoDB to test detection and fixing
+Database Issue Generator - IMPROVED VERSION
+Creates intentional errors in MongoDB to test the self-healing system
 
-This script creates:
-1. Duplicate records
-2. Orphaned documents
-3. Missing required fields
-4. Invalid data values
-5. Slow query scenarios
+Issues Created:
+  1. Duplicate Records       - Same email appears multiple times
+  2. Orphaned Documents      - Orders referencing non-existent users
+  3. Missing Required Fields - Users without email or name
+  4. Invalid Data Values     - Orders with wrong status values
+  5. Slow Query Scenarios    - 1000 products without indexes
 
 Usage: python create_test_issues.py
 """
@@ -32,126 +32,194 @@ CONFIG = {
 # ============================================================================
 
 class IssueGenerator:
-    """Generates test issues in database"""
-    
+    """Generates test issues in the database"""
+
     def __init__(self):
+        print()
         print("=" * 70)
-        print("Database Issue Generator")
-        print("Creates test data with intentional errors for testing")
+        print("  Database Issue Generator")
+        print("  Creates intentional errors for testing the self-healing system")
         print("=" * 70)
         print()
-        
+
         try:
-            self.client = MongoClient(CONFIG['MONGODB_URI'], serverSelectionTimeoutMS=5000)
+            self.client = MongoClient(
+                CONFIG['MONGODB_URI'],
+                serverSelectionTimeoutMS=5000
+            )
             self.db = self.client[CONFIG['DATABASE_NAME']]
             self.client.admin.command('ping')
             print(f"✅ Connected to MongoDB: {CONFIG['DATABASE_NAME']}")
             print()
         except Exception as e:
             print(f"❌ Cannot connect to MongoDB: {e}")
-            print("Please make sure MongoDB is running!")
+            print()
+            print("Please make sure MongoDB is running:")
+            print("   docker start mongodb")
             sys.exit(1)
-    
+
+    # -------------------------------------------------------------------------
+    # MAIN GENERATE
+    # -------------------------------------------------------------------------
+
     def generate_all_issues(self):
         """Generate all types of issues"""
-        
-        print("Generating test data with issues...")
+
+        print("Generating test data with intentional errors...")
         print("=" * 70)
         print()
-        
-        # Clear existing test data
-        self.clear_test_data()
-        
-        # Create issues
-        self.create_duplicate_users()
-        self.create_orphaned_orders()
-        self.create_users_with_missing_fields()
-        self.create_orders_with_invalid_data()
-        self.create_data_for_slow_queries()
-        
+
+        # Step 1: Clear all old data including backups
+        self.clear_all_data()
+
+        # Step 2: Create each type of issue
+        dup_count      = self.create_duplicate_users()
+        orphan_count   = self.create_orphaned_orders()
+        missing_count  = self.create_users_with_missing_fields()
+        invalid_count  = self.create_orders_with_invalid_data()
+        slow_count     = self.create_data_for_slow_queries()
+
+        # Step 3: Print final summary
         print()
         print("=" * 70)
-        print("✅ Test Issues Created Successfully!")
+        print("✅ All Test Issues Created Successfully!")
         print("=" * 70)
         print()
-        self.print_summary()
-    
-    def clear_test_data(self):
-        """Clear existing test data"""
-        print("🗑️  Clearing existing test data...")
-        
-        self.db.users.delete_many({})
-        self.db.orders.delete_many({})
-        self.db.products.delete_many({})
-        
-        print("   Cleared users, orders, and products collections")
+        self.print_summary(dup_count, orphan_count, missing_count, invalid_count, slow_count)
+
+    # -------------------------------------------------------------------------
+    # CLEAR DATA
+    # -------------------------------------------------------------------------
+
+    def clear_all_data(self):
+        """Clear existing test data AND old backup collections"""
+        print("🗑️  Clearing existing data...")
+
+        # Clear main collections
+        r1 = self.db.users.delete_many({})
+        r2 = self.db.orders.delete_many({})
+        r3 = self.db.products.delete_many({})
+
+        print(f"   Deleted {r1.deleted_count} users")
+        print(f"   Deleted {r2.deleted_count} orders")
+        print(f"   Deleted {r3.deleted_count} products")
+
+        # Also drop old backup collections so they don't confuse verify_issues.py
+        all_collections = self.db.list_collection_names()
+        backup_colls = [c for c in all_collections if '_backup_' in c or c.endswith('_orphaned')]
+
+        if backup_colls:
+            for coll in backup_colls:
+                self.db[coll].drop()
+                print(f"   Dropped old backup: {coll}")
+        else:
+            print("   No old backups to clear")
+
         print()
-    
+
+    # -------------------------------------------------------------------------
+    # ISSUE 1: DUPLICATES
+    # -------------------------------------------------------------------------
+
     def create_duplicate_users(self):
         """Create duplicate user records"""
         print("1️⃣  Creating DUPLICATE USERS...")
-        
-        duplicates = [
+
+        users = [
+            # john@example.com appears 3 times
             {
                 'email': 'john@example.com',
                 'name': 'John Doe',
+                'age': 28,
                 'status': 'active',
+                'phone': '555-0101',
                 'created_at': datetime.now()
             },
             {
-                'email': 'john@example.com',  # Duplicate!
+                'email': 'john@example.com',   # Duplicate 1
                 'name': 'John Doe',
+                'age': 28,
                 'status': 'active',
+                'phone': '555-0101',
                 'created_at': datetime.now()
             },
             {
-                'email': 'john@example.com',  # Duplicate!
+                'email': 'john@example.com',   # Duplicate 2
                 'name': 'John Smith',
-                'status': 'active',
+                'age': 30,
+                'status': 'inactive',
+                'phone': '555-0199',
                 'created_at': datetime.now()
             },
+            # alice@example.com appears 2 times
             {
                 'email': 'alice@example.com',
                 'name': 'Alice Johnson',
+                'age': 24,
                 'status': 'active',
+                'phone': '555-0102',
                 'created_at': datetime.now()
             },
             {
-                'email': 'alice@example.com',  # Duplicate!
+                'email': 'alice@example.com',  # Duplicate
                 'name': 'Alice Johnson',
+                'age': 24,
                 'status': 'inactive',
+                'phone': '555-0102',
                 'created_at': datetime.now()
             },
+            # bob@example.com - valid, no duplicate
             {
                 'email': 'bob@example.com',
                 'name': 'Bob Wilson',
+                'age': 35,
                 'status': 'active',
+                'phone': '555-0103',
                 'created_at': datetime.now()
-            }
+            },
         ]
-        
-        result = self.db.users.insert_many(duplicates)
-        
-        print(f"   ✅ Created {len(result.inserted_ids)} users")
-        print(f"   ⚠️  Duplicates: john@example.com (3 times), alice@example.com (2 times)")
+
+        result = self.db.users.insert_many(users)
+        count = len(result.inserted_ids)
+
+        print(f"   ✅ Inserted {count} users")
+        print(f"   ⚠️  john@example.com  → appears 3 times (2 duplicates)")
+        print(f"   ⚠️  alice@example.com → appears 2 times (1 duplicate)")
+        print(f"   ✅  bob@example.com   → appears 1 time  (no duplicate)")
         print()
-    
+
+        return 3  # 3 extra duplicate documents
+
+    # -------------------------------------------------------------------------
+    # ISSUE 2: ORPHANED DOCUMENTS
+    # -------------------------------------------------------------------------
+
     def create_orphaned_orders(self):
         """Create orders that reference non-existent users"""
         print("2️⃣  Creating ORPHANED ORDERS...")
-        
+
         orders = [
+            # Valid orders (users exist)
             {
                 'order_id': 'ORD-001',
-                'user_email': 'bob@example.com',  # Valid user
+                'user_email': 'bob@example.com',       # ✅ user exists
                 'product': 'Laptop',
                 'amount': 999.99,
                 'status': 'pending',
                 'created_at': datetime.now()
             },
             {
+                'order_id': 'ORD-004',
+                'user_email': 'alice@example.com',     # ✅ user exists
+                'product': 'Monitor',
+                'amount': 299.99,
+                'status': 'processing',
+                'created_at': datetime.now()
+            },
+            # Orphaned orders (users do NOT exist)
+            {
                 'order_id': 'ORD-002',
-                'user_email': 'nonexistent@example.com',  # Orphaned! User doesn't exist
+                'user_email': 'nonexistent@example.com',   # ❌ user missing
                 'product': 'Mouse',
                 'amount': 29.99,
                 'status': 'completed',
@@ -159,91 +227,103 @@ class IssueGenerator:
             },
             {
                 'order_id': 'ORD-003',
-                'user_email': 'deleted_user@example.com',  # Orphaned! User doesn't exist
+                'user_email': 'deleted_user@example.com',  # ❌ user missing
                 'product': 'Keyboard',
                 'amount': 79.99,
                 'status': 'pending',
                 'created_at': datetime.now()
             },
             {
-                'order_id': 'ORD-004',
-                'user_email': 'alice@example.com',  # Valid user (duplicate, but exists)
-                'product': 'Monitor',
-                'amount': 299.99,
-                'status': 'processing',
-                'created_at': datetime.now()
-            },
-            {
                 'order_id': 'ORD-005',
-                'user_email': 'ghost@example.com',  # Orphaned! User doesn't exist
+                'user_email': 'ghost@example.com',         # ❌ user missing
                 'product': 'Webcam',
                 'amount': 59.99,
                 'status': 'cancelled',
                 'created_at': datetime.now()
-            }
+            },
         ]
-        
+
         result = self.db.orders.insert_many(orders)
-        
-        print(f"   ✅ Created {len(result.inserted_ids)} orders")
-        print(f"   ⚠️  Orphaned orders: 3 (users don't exist)")
-        print(f"      - nonexistent@example.com")
-        print(f"      - deleted_user@example.com")
-        print(f"      - ghost@example.com")
+        count = len(result.inserted_ids)
+        orphan_count = 3
+
+        print(f"   ✅ Inserted {count} orders total")
+        print(f"   ✅  ORD-001 → bob@example.com   (valid user)")
+        print(f"   ✅  ORD-004 → alice@example.com (valid user)")
+        print(f"   ⚠️  ORD-002 → nonexistent@example.com  (user missing!)")
+        print(f"   ⚠️  ORD-003 → deleted_user@example.com (user missing!)")
+        print(f"   ⚠️  ORD-005 → ghost@example.com         (user missing!)")
         print()
-    
+
+        return orphan_count
+
+    # -------------------------------------------------------------------------
+    # ISSUE 3: MISSING FIELDS
+    # -------------------------------------------------------------------------
+
     def create_users_with_missing_fields(self):
         """Create users with missing required fields"""
         print("3️⃣  Creating USERS WITH MISSING FIELDS...")
-        
+
         incomplete_users = [
             {
-                # Missing 'email' field!
+                # email field completely absent
                 'name': 'Charlie Brown',
+                'age': 22,
                 'status': 'active',
                 'created_at': datetime.now()
             },
             {
-                'email': '',  # Empty email!
+                'email': '',               # email is empty string
                 'name': 'Diana Prince',
+                'age': 29,
                 'status': 'active',
                 'created_at': datetime.now()
             },
             {
-                'email': None,  # Null email!
+                'email': None,             # email is null
                 'name': 'Eve Adams',
+                'age': 31,
                 'status': 'inactive',
                 'created_at': datetime.now()
             },
             {
                 'email': 'frank@example.com',
-                # Missing 'name' field!
+                # name field completely absent
+                'age': 40,
                 'status': 'active',
                 'created_at': datetime.now()
-            }
+            },
         ]
-        
+
         result = self.db.users.insert_many(incomplete_users)
-        
-        print(f"   ✅ Created {len(result.inserted_ids)} incomplete users")
-        print(f"   ⚠️  Missing fields:")
-        print(f"      - 1 user without email")
-        print(f"      - 1 user with empty email")
-        print(f"      - 1 user with null email")
-        print(f"      - 1 user without name")
+        count = len(result.inserted_ids)
+
+        print(f"   ✅ Inserted {count} incomplete users")
+        print(f"   ⚠️  Charlie Brown  → no 'email' field at all")
+        print(f"   ⚠️  Diana Prince   → email is empty string ''")
+        print(f"   ⚠️  Eve Adams      → email is null (None)")
+        print(f"   ⚠️  frank@...      → no 'name' field at all")
         print()
-    
+
+        return count
+
+    # -------------------------------------------------------------------------
+    # ISSUE 4: INVALID DATA
+    # -------------------------------------------------------------------------
+
     def create_orders_with_invalid_data(self):
         """Create orders with invalid status values"""
-        print("4️⃣  Creating ORDERS WITH INVALID DATA...")
-        
+        print("4️⃣  Creating ORDERS WITH INVALID STATUS...")
+
+        # Valid statuses are: pending, processing, completed, cancelled
         invalid_orders = [
             {
                 'order_id': 'ORD-101',
                 'user_email': 'bob@example.com',
                 'product': 'Tablet',
                 'amount': 399.99,
-                'status': 'xyz',  # Invalid! Should be pending/processing/completed/cancelled
+                'status': 'xyz',          # ❌ completely wrong
                 'created_at': datetime.now()
             },
             {
@@ -251,7 +331,7 @@ class IssueGenerator:
                 'user_email': 'alice@example.com',
                 'product': 'Phone',
                 'amount': 699.99,
-                'status': 'unknown',  # Invalid!
+                'status': 'unknown',      # ❌ wrong
                 'created_at': datetime.now()
             },
             {
@@ -259,7 +339,7 @@ class IssueGenerator:
                 'user_email': 'john@example.com',
                 'product': 'Headphones',
                 'amount': 149.99,
-                'status': 'in_progress',  # Invalid! Should be 'processing'
+                'status': 'in_progress',  # ❌ should be 'processing'
                 'created_at': datetime.now()
             },
             {
@@ -267,94 +347,140 @@ class IssueGenerator:
                 'user_email': 'bob@example.com',
                 'product': 'Charger',
                 'amount': 19.99,
-                'status': 'done',  # Invalid! Should be 'completed'
+                'status': 'done',         # ❌ should be 'completed'
                 'created_at': datetime.now()
-            }
+            },
         ]
-        
+
         result = self.db.orders.insert_many(invalid_orders)
-        
-        print(f"   ✅ Created {len(result.inserted_ids)} orders with invalid data")
-        print(f"   ⚠️  Invalid statuses:")
-        print(f"      - 'xyz' (should be pending/processing/completed/cancelled)")
-        print(f"      - 'unknown'")
-        print(f"      - 'in_progress'")
-        print(f"      - 'done'")
+        count = len(result.inserted_ids)
+
+        print(f"   ✅ Inserted {count} orders with invalid status")
+        print(f"   ⚠️  ORD-101 → status='xyz'         (valid: pending/processing/completed/cancelled)")
+        print(f"   ⚠️  ORD-102 → status='unknown'     (valid: pending/processing/completed/cancelled)")
+        print(f"   ⚠️  ORD-103 → status='in_progress' (valid: pending/processing/completed/cancelled)")
+        print(f"   ⚠️  ORD-104 → status='done'        (valid: pending/processing/completed/cancelled)")
         print()
-    
+
+        return count
+
+    # -------------------------------------------------------------------------
+    # ISSUE 5: SLOW QUERIES
+    # -------------------------------------------------------------------------
+
     def create_data_for_slow_queries(self):
-        """Create data that will cause slow queries"""
+        """Create 1000 products without indexes (causes slow queries)"""
         print("5️⃣  Creating DATA FOR SLOW QUERIES...")
-        
-        # Create many products without indexes
+
+        categories = ['Electronics', 'Clothing', 'Books', 'Food', 'Toys']
+
         products = []
         for i in range(1000):
             products.append({
                 'product_id': f'PROD-{i:04d}',
                 'name': f'Product {i}',
-                'category': random.choice(['Electronics', 'Clothing', 'Books', 'Food', 'Toys']),
-                'price': round(random.uniform(10, 1000), 2),
+                'category': random.choice(categories),
+                'price': round(random.uniform(10.0, 1000.0), 2),
                 'stock': random.randint(0, 100),
-                'description': f'This is product number {i} with a long description that makes queries slower',
+                'description': (
+                    f'This is product number {i}. '
+                    f'A detailed description to make the document larger '
+                    f'and queries slower without indexes.'
+                ),
                 'created_at': datetime.now() - timedelta(days=random.randint(0, 365))
             })
-        
-        result = self.db.products.insert_many(products)
-        
-        print(f"   ✅ Created {len(result.inserted_ids)} products")
-        print(f"   ⚠️  No indexes created (will cause slow queries)")
-        print(f"      - Queries on 'category' will be slow")
-        print(f"      - Queries on 'price' will be slow")
+
+        # Insert in batches of 100 to be Pentium-friendly
+        batch_size = 100
+        total_inserted = 0
+        for i in range(0, len(products), batch_size):
+            batch = products[i:i + batch_size]
+            result = self.db.products.insert_many(batch)
+            total_inserted += len(result.inserted_ids)
+
+        print(f"   ✅ Inserted {total_inserted} products (no indexes)")
+        print(f"   ⚠️  Searching by 'category' will be slow → full collection scan")
+        print(f"   ⚠️  Searching by 'price'    will be slow → full collection scan")
+        print(f"   ⚠️  Searching by 'name'     will be slow → full collection scan")
         print()
-    
-    def print_summary(self):
-        """Print summary of created issues"""
-        print("📊 SUMMARY OF ISSUES CREATED:")
-        print()
-        
-        # Count issues
-        total_users = self.db.users.count_documents({})
-        total_orders = self.db.orders.count_documents({})
+
+        return total_inserted
+
+    # -------------------------------------------------------------------------
+    # SUMMARY
+    # -------------------------------------------------------------------------
+
+    def print_summary(self, dup_count, orphan_count, missing_count, invalid_count, slow_count):
+        """Print a clear summary of everything created"""
+
+        total_users    = self.db.users.count_documents({})
+        total_orders   = self.db.orders.count_documents({})
         total_products = self.db.products.count_documents({})
-        
-        print(f"Total Documents Created:")
-        print(f"  • Users: {total_users}")
-        print(f"  • Orders: {total_orders}")
-        print(f"  • Products: {total_products}")
-        print()
-        
-        print(f"Issues Created:")
-        print(f"  1. Duplicate Records:")
-        print(f"     ⚠️  john@example.com appears 3 times")
-        print(f"     ⚠️  alice@example.com appears 2 times")
-        print()
-        
-        print(f"  2. Orphaned Documents:")
-        print(f"     ⚠️  3 orders reference non-existent users")
-        print()
-        
-        print(f"  3. Missing Required Fields:")
-        print(f"     ⚠️  4 users with missing/empty/null emails or names")
-        print()
-        
-        print(f"  4. Invalid Data:")
-        print(f"     ⚠️  4 orders with invalid status values")
-        print()
-        
-        print(f"  5. Slow Query Potential:")
-        print(f"     ⚠️  1000 products without indexes")
-        print()
-        
+
+        # Count real issues for verify_issues.py
+        issue_total = dup_count + orphan_count + missing_count + invalid_count + 3  # 3 indexes
+
+        print("📊 FINAL SUMMARY")
         print("=" * 70)
         print()
-        print("🚀 NOW RUN THE SELF-HEALING SYSTEM:")
-        print("   python realtime_self_healing_mongodb.py")
+        print("  Collections created:")
+        print(f"     users    : {total_users}  documents")
+        print(f"     orders   : {total_orders}  documents")
+        print(f"     products : {total_products} documents")
         print()
-        print("📊 THEN OPEN THE DASHBOARD:")
-        print("   http://localhost:5000")
+        print("  Issues created (what self-healing will detect & fix):")
         print()
-        print("👀 WATCH IT DETECT AND FIX THESE ISSUES IN REAL-TIME!")
+        print(f"     1. Duplicate Records      → {dup_count} extra docs")
+        print(f"        ⚠️  john@example.com  appears 3x")
+        print(f"        ⚠️  alice@example.com appears 2x")
+        print()
+        print(f"     2. Orphaned Orders        → {orphan_count} orphaned docs")
+        print(f"        ⚠️  ORD-002 (nonexistent user)")
+        print(f"        ⚠️  ORD-003 (deleted user)")
+        print(f"        ⚠️  ORD-005 (ghost user)")
+        print()
+        print(f"     3. Missing Required Fields → {missing_count} incomplete users")
+        print(f"        ⚠️  Charlie Brown  (no email field)")
+        print(f"        ⚠️  Diana Prince   (empty email)")
+        print(f"        ⚠️  Eve Adams      (null email)")
+        print(f"        ⚠️  frank@...      (no name field)")
+        print()
+        print(f"     4. Invalid Data Values    → {invalid_count} bad orders")
+        print(f"        ⚠️  ORD-101 status='xyz'")
+        print(f"        ⚠️  ORD-102 status='unknown'")
+        print(f"        ⚠️  ORD-103 status='in_progress'")
+        print(f"        ⚠️  ORD-104 status='done'")
+        print()
+        print(f"     5. Missing Indexes        → 3 indexes missing on products")
+        print(f"        ⚠️  No index on 'category'")
+        print(f"        ⚠️  No index on 'price'")
+        print(f"        ⚠️  No index on 'name'")
+        print()
+        print(f"  Expected by verify_issues.py: ~{issue_total} issues")
+        print()
         print("=" * 70)
+        print()
+        print("  🚀 NEXT STEPS:")
+        print()
+        print("  Step 1 — Verify issues exist:")
+        print("           python verify_issues.py")
+        print()
+        print("  Step 2 — Start self-healing system:")
+        print("           python realtime_self_healing_mongodb.py")
+        print()
+        print("  Step 3 — Open dashboard:")
+        print("           http://localhost:5000")
+        print()
+        print("  Step 4 — Watch it detect and fix everything in real-time! 🎉")
+        print()
+        print("  Step 5 — Verify all fixed:")
+        print("           python verify_issues.py")
+        print()
+        print("=" * 70)
+        print()
+        print("  💡 TIP: Run this script again anytime to recreate all test issues.")
+        print()
+
 
 # ============================================================================
 # MAIN
@@ -362,13 +488,9 @@ class IssueGenerator:
 
 def main():
     """Main entry point"""
-    
     generator = IssueGenerator()
     generator.generate_all_issues()
-    
-    print()
-    print("💡 TIP: Run this script again anytime to recreate test issues")
-    print()
+
 
 if __name__ == '__main__':
     main()
